@@ -5,8 +5,8 @@ import argparse
 import pathlib
 import dataclasses
 import logging
-
 import hashlib
+
 from Crypto.Cipher import AES
 import bencodepy
 
@@ -31,6 +31,7 @@ def get_offset(chunk_hash, chunk_size, storage_size):
     chunk_hash_int = int(base64.b16encode(chunk_hash).decode(), 16)
     chunk_no = chunk_hash_int % num_chunks
     ret = chunk_no * chunk_size
+    logging.debug("...=%r", ret)
     return ret
 
 
@@ -40,7 +41,11 @@ def parse_args():
     parser.add_argument("--decryptedfile", required=True)
     parser.add_argument("--metafile", required=True)
     parser.add_argument("--storagefile", required=True)
-    parser.add_argument("--mode", required=True, choices=["decode", "encode"])
+    parser.add_argument(
+        "--mode",
+        required=True,
+        choices=["decode", "encode", "verify_decryptedfile"],
+    )
     return parser.parse_args().__dict__
 
 
@@ -52,11 +57,17 @@ def get_chunks_hashes(bdecoded):
     file_length = bdecoded[b"files"][0][b"length"]
     if num_chunks * chunk_size != file_length:
         last_chunk_size = file_length - ((num_chunks - 1) * chunk_size)
+        # last_chunk_size = ((num_chunks) * chunk_size) - file_length
     else:
         last_chunk_size = chunk_size
+    logging.debug(
+        "get_chunks_hashes: chunk_size=%r, last_chunk_size=%r",
+        chunk_size,
+        last_chunk_size,
+    )
     for chunk_no in range(num_chunks):
         chunk_hash = bdecoded[b"pieces"][chunk_no * 20 : (chunk_no + 1) * 20]
-        yield ChunkMetadata(
+        chunk = ChunkMetadata(
             offset=offset,
             number=chunk_no,
             size=chunk_size
@@ -65,6 +76,8 @@ def get_chunks_hashes(bdecoded):
             h=chunk_hash,
             filename=bdecoded[b"files"][0][b"path"],
         )
+        logging.debug("get_chunks_hashes: yielding: %r" % chunk)
+        yield chunk
         offset += chunk_size
 
 
@@ -80,16 +93,25 @@ def encode(decryptedfile, metafile, storagefile):
     with open(metafile, "rb") as f:
         bdecoded = bencodepy.decode(f.read())
     storage_size = pathlib.Path(storagefile).stat().st_size
-    with open(storagefile, "wb") as f_storage, open(
+    with open(storagefile, "r+b") as f_storage, open(
         decryptedfile, "rb"
     ) as f_decrypted:
         for chunk in get_chunks_hashes(bdecoded):
             f_decrypted.seek(chunk.offset)
+            chunk_decrypted = f_decrypted.read(chunk.size)
             chunk_encrypted = encrypt_chunk(
-                chunk, f_decrypted.read(chunk.size)
+                chunk, chunk_decrypted
             )
-            f_storage.seek(get_offset(chunk.h, chunk.size, storage_size))
+            f_storage_offset = get_offset(chunk.h, chunk.size, storage_size)
+            f_storage.seek(f_storage_offset)
             f_storage.write(chunk_encrypted)
+            f_storage.flush()
+            logging.info(
+                "Copied from f_encrypted_offset=%r to f_storage_offset=%r: %r",
+                chunk.offset,
+                f_storage_offset,
+                chunk_decrypted if False else b'',
+            )
 
 
 def decode(decryptedfile, metafile, storagefile):
@@ -100,10 +122,32 @@ def decode(decryptedfile, metafile, storagefile):
         decryptedfile, "wb"
     ) as f_decrypted:
         for chunk in get_chunks_hashes(bdecoded):
-            f_storage.seek(get_offset(chunk.h, chunk.size, storage_size))
-            chunk_decrypted = decrypt_chunk(chunk, f_storage.read(chunk.size))
+            f_storage_offset = get_offset(chunk.h, chunk.size, storage_size)
+            f_storage.seek(f_storage_offset)
+            encrypted_chunk = f_storage.read(chunk.size)
+            chunk_decrypted = decrypt_chunk(chunk, encrypted_chunk)
+            logging.info(
+                "Copied from f_storage_offset=%r to f_decrypted_offset=%r: %r",
+                f_storage_offset,
+                chunk.offset,
+                chunk_decrypted if False else b'',
+            )
             f_decrypted.seek(chunk.offset)
             f_decrypted.write(chunk_decrypted)
+#            break
+
+
+def verify_decryptedfile(decryptedfile, metafile, storagefile):
+    logging.warning("NOTE: in this mode, --storagefile is ignored.")
+    with open(metafile, "rb") as f:
+        bdecoded = bencodepy.decode(f.read())
+    with open(decryptedfile, "rb") as f_decrypted:
+        for chunk in get_chunks_hashes(bdecoded):
+            f_decrypted.seek(chunk.offset)
+            decrypted_chunk = f_decrypted.read(chunk.size)
+            expected_hash = hashlib.sha1(decrypted_chunk).digest()
+            if chunk.h != expected_hash:
+                logging.info("Wrong chunk: %r", chunk)
 
 
 if __name__ == "__main__":
@@ -114,5 +158,7 @@ if __name__ == "__main__":
         encode(**args)
     elif mode == "decode":
         decode(**args)
+    elif mode == "verify_decryptedfile":
+        verify_decryptedfile(**args)
     else:
         raise RuntimeError("unexpected mode: %r" % mode)
