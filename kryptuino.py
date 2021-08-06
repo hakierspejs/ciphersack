@@ -106,11 +106,11 @@ def encode(decryptedfile, metafile, storagefile):
             f_storage.seek(f_storage_offset)
             f_storage.write(chunk_encrypted)
             f_storage.flush()
-            logging.info(
+            logging.debug(
                 "Copied from f_encrypted_offset=%r to f_storage_offset=%r: %r",
                 chunk.offset,
                 f_storage_offset,
-                chunk_decrypted if False else b'',
+                chunk_decrypted,
             )
 
 
@@ -126,11 +126,11 @@ def decode(decryptedfile, metafile, storagefile):
             f_storage.seek(f_storage_offset)
             encrypted_chunk = f_storage.read(chunk.size)
             chunk_decrypted = decrypt_chunk(chunk, encrypted_chunk)
-            logging.info(
+            logging.debug(
                 "Copied from f_storage_offset=%r to f_decrypted_offset=%r: %r",
                 f_storage_offset,
                 chunk.offset,
-                chunk_decrypted if False else b'',
+                chunk_decrypted,
             )
             f_decrypted.seek(chunk.offset)
             f_decrypted.write(chunk_decrypted)
