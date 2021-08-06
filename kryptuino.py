@@ -59,7 +59,9 @@ def get_chunks_hashes(bdecoded):
         yield ChunkMetadata(
             offset=offset,
             number=chunk_no,
-            size=chunk_size if chunk_no == num_chunks else last_chunk_size,
+            size=chunk_size
+            if chunk_no != (num_chunks - 1)
+            else last_chunk_size,
             h=chunk_hash,
             filename=bdecoded[b"files"][0][b"path"],
         )
