@@ -1,4 +1,4 @@
-# kryptuino
+# ciphersack
 
 A proof of concept showing steganographic file storage. Here's an (abstract)
 use case:
