@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import base64
 import argparse
 import pathlib
@@ -81,12 +82,35 @@ def get_chunks_hashes(bdecoded):
         offset += chunk_size
 
 
+def split_into_chunks(buf, chunksize):
+    return [
+        buf[i * chunksize : (i + 1) * chunksize]
+        for i in range(math.ceil(len(buf) / chunksize))
+    ]
+
+
+def derive_key_from_metadata(chunk_metadata):
+    h_as_int = int.from_bytes(chunk_metadata.h[:16], "big")
+    xored_with_chunk_no = h_as_int ^ chunk_metadata.number
+    return int.to_bytes(xored_with_chunk_no, 16, "big")
+
+
 def encrypt_chunk(chunk_metadata, chunk_contents):
-    return chunk_contents  # TODO
+    ret = b""
+    key = derive_key_from_metadata(chunk_metadata)
+    cipher = AES.new(key, AES.MODE_CTR, nonce=b"")
+    for cipher_chunk in split_into_chunks(chunk_contents, 16):
+        ret += cipher.encrypt(cipher_chunk)
+    return ret
 
 
 def decrypt_chunk(chunk_metadata, chunk_contents):
-    return chunk_contents  # TODO
+    ret = b""
+    key = derive_key_from_metadata(chunk_metadata)
+    cipher = AES.new(key, AES.MODE_CTR, nonce=b"")
+    for cipher_chunk in split_into_chunks(chunk_contents, 16):
+        ret += cipher.decrypt(cipher_chunk)
+    return ret
 
 
 def encode(decryptedfile, metafile, storagefile):
@@ -99,9 +123,7 @@ def encode(decryptedfile, metafile, storagefile):
         for chunk in get_chunks_hashes(bdecoded):
             f_decrypted.seek(chunk.offset)
             chunk_decrypted = f_decrypted.read(chunk.size)
-            chunk_encrypted = encrypt_chunk(
-                chunk, chunk_decrypted
-            )
+            chunk_encrypted = encrypt_chunk(chunk, chunk_decrypted)
             f_storage_offset = get_offset(chunk.h, chunk.size, storage_size)
             f_storage.seek(f_storage_offset)
             f_storage.write(chunk_encrypted)
@@ -134,7 +156,6 @@ def decode(decryptedfile, metafile, storagefile):
             )
             f_decrypted.seek(chunk.offset)
             f_decrypted.write(chunk_decrypted)
-#            break
 
 
 def verify_decryptedfile(decryptedfile, metafile, storagefile):
